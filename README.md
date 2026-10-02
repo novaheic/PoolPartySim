@@ -1,30 +1,30 @@
 # Pool Party
 
-Interactive Uniswap V2-style AMM sandbox for teaching DeFi basics. Everything is simulated — no blockchain, no wallets. Multiple people join one shared global sandbox via PartyKit.
+Interactive Uniswap V2-style AMM sandbox for teaching DeFi basics. Everything is simulated — no blockchain, no wallets. Multiple people join one shared global sandbox via a Cloudflare Durable Object (PartyServer).
 
 ## Quick start
 
 ```bash
 npm install
 
-# Terminal 1 — must print "Ready on …:1999" (not a random port)
+# Terminal 1 — Cloudflare Worker (PartyServer) on :1999
 npm run dev:party
 
 # Terminal 2 — Vite UI
 npm run dev
 ```
 
-Open the Vite URL (e.g. http://localhost:5173). The browser connects **directly** to PartyKit at `127.0.0.1:1999`.
+Open the Vite URL (e.g. http://localhost:5173). The browser connects **directly** to the worker at `127.0.0.1:1999`.
 
-If join fails: stop every `partykit` / `vite` process, then start `dev:party` first and confirm port **1999**, then `dev`.
+If join fails: stop every `wrangler` / `vite` process, then start `dev:party` first and confirm port **1999**, then `dev`.
 
 ```bash
 npm test        # AMM + period unit tests
 npm run build   # production client build
-npm run deploy  # deploy PartyKit (requires partykit login)
+npm run deploy  # build + wrangler deploy (requires `npx wrangler login`)
 ```
 
-Optional: set `VITE_PARTYKIT_HOST` if the PartyKit host is not `127.0.0.1:1999` in local dev (or not the page host in production).
+Optional: set `VITE_PARTYKIT_HOST` if the worker host is not `127.0.0.1:1999` in local dev (or not the page host in production).
 
 ## What you get
 
@@ -35,7 +35,7 @@ Optional: set `VITE_PARTYKIT_HOST` if the PartyKit host is not `127.0.0.1:1999` 
 - Swap + LP UI, live `x·y=k` curve, activity feed, IL tracker, arb hints, guided challenges
 - Instructor mode: oracle price sliders, whale trade, airdrop
 - Auto-reseed **Saturday 00:00 Europe/Amsterdam** (no manual reset)
-- PartyKit free tier may also clear idle storage ~daily — a cold room simply reseeds on next join
+- Idle Durable Objects may hibernate — a cold room simply reseeds on next join
 
 ## AMM math (short)
 
@@ -65,7 +65,7 @@ Three pools let the class see **arbitrage**: if WOOD/GOLD disagrees with WOOD/ST
 
 - `src/amm.ts` — pure AMM helpers (tested)
 - `src/seed.ts` / `src/lib/period.ts` — initial pools + Saturday period ids
-- `party/sandbox.ts` — authoritative PartyKit room
+- `party/sandbox.ts` — authoritative PartyServer room (Cloudflare Worker)
 - `src/store.ts` — Zustand client mirror + PartySocket
 - `src/components/*` — UI
 

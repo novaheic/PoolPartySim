@@ -1,4 +1,5 @@
-import type * as Party from 'partykit/server';
+import type { Connection } from 'partyserver';
+import { routePartykitRequest, Server } from 'partyserver';
 import {
   applySwapToPool,
   canRemoveLiquidity,
@@ -31,6 +32,10 @@ import {
   type TokenId,
 } from '../src/types';
 
+export type Env = {
+  Main: DurableObjectNamespace<Main>;
+};
+
 const ORACLE_MERGE_MS = 15_000;
 const MAX_HISTORY = 300;
 
@@ -49,35 +54,28 @@ async function messageToString(
       ),
     );
   }
-  // Blob or unknown — PartyKit may pass non-typed payloads at runtime
   const maybe = message as { text?: () => Promise<string> };
   if (typeof maybe.text === 'function') return maybe.text();
   return String(message);
 }
 
-export default class SandboxServer implements Party.Server {
-  state: RoomState;
-  room: Party.Room;
+/** Binding name `Main` → PartySocket `party: "main"`. */
+export class Main extends Server<Env> {
+  state: RoomState = createInitialState();
   /** Kept out of RoomState so each player only receives their own history. */
   histories = new Map<string, HoldingSnapshot[]>();
 
-  constructor(room: Party.Room) {
-    this.room = room;
-    this.state = createInitialState();
-  }
-
   onStart() {
-    // In-memory only. Durable storage writes were racing Vite/HMR and
-    // made the browser look like it "refreshed" on every join.
+    // In-memory only — durable storage would rehydrate mid-workshop and confuse players.
     this.ensureFreshPeriod();
   }
 
-  onConnect(connection: Party.Connection) {
+  onConnect(connection: Connection) {
     this.ensureFreshPeriod();
     this.sendState(connection);
   }
 
-  onClose(connection: Party.Connection) {
+  onClose(connection: Connection) {
     let changed = false;
     for (const p of this.state.players) {
       if (p.connectionId === connection.id) {
@@ -88,12 +86,12 @@ export default class SandboxServer implements Party.Server {
     if (changed) this.broadcastState();
   }
 
-  async onMessage(message: string | ArrayBuffer, sender: Party.Connection) {
+  async onMessage(connection: Connection, message: string | ArrayBuffer) {
     let raw: string;
     try {
       raw = await messageToString(message);
     } catch {
-      this.send(sender, { type: 'error', message: 'Could not read message' });
+      this.send(connection, { type: 'error', message: 'Could not read message' });
       return;
     }
 
@@ -101,7 +99,7 @@ export default class SandboxServer implements Party.Server {
     try {
       msg = JSON.parse(raw) as ClientMessage;
     } catch {
-      this.send(sender, { type: 'error', message: 'Invalid message' });
+      this.send(connection, { type: 'error', message: 'Invalid message' });
       return;
     }
 
@@ -110,38 +108,38 @@ export default class SandboxServer implements Party.Server {
     try {
       switch (msg.type) {
         case 'join':
-          this.handleJoin(sender, msg.name, msg.playerId);
+          this.handleJoin(connection, msg.name, msg.playerId);
           break;
         case 'swap':
-          this.handleSwap(sender, msg);
+          this.handleSwap(connection, msg);
           break;
         case 'addLiquidity':
-          this.handleAddLiquidity(sender, msg);
+          this.handleAddLiquidity(connection, msg);
           break;
         case 'removeLiquidity':
-          this.handleRemoveLiquidity(sender, msg);
+          this.handleRemoveLiquidity(connection, msg);
           break;
         case 'setOracle':
-          this.handleSetOracle(sender, msg.token, msg.usd);
+          this.handleSetOracle(connection, msg.token, msg.usd);
           break;
         case 'injectWhale':
-          this.handleWhale(sender, msg);
+          this.handleWhale(connection, msg);
           break;
         case 'giveTokens':
-          this.handleGiveTokens(sender, msg.amountPerToken);
+          this.handleGiveTokens(connection, msg.amountPerToken);
           break;
         case 'resetSandbox':
-          this.handleResetSandbox(sender);
+          this.handleResetSandbox(connection);
           break;
         case 'markChallenge':
-          this.handleMarkChallenge(sender, msg.challengeId);
+          this.handleMarkChallenge(connection, msg.challengeId);
           break;
         default:
-          this.send(sender, { type: 'error', message: 'Unknown action' });
+          this.send(connection, { type: 'error', message: 'Unknown action' });
       }
     } catch (err) {
       const text = err instanceof Error ? err.message : 'Action failed';
-      this.send(sender, { type: 'error', message: text });
+      this.send(connection, { type: 'error', message: text });
     }
   }
 
@@ -165,7 +163,7 @@ export default class SandboxServer implements Party.Server {
     );
   }
 
-  private requirePlayer(connection: Party.Connection): Player {
+  private requirePlayer(connection: Connection): Player {
     const player = this.state.players.find(
       (p) => p.connectionId === connection.id,
     );
@@ -174,7 +172,7 @@ export default class SandboxServer implements Party.Server {
   }
 
   private handleJoin(
-    connection: Party.Connection,
+    connection: Connection,
     rawName: string,
     preferredId?: string,
   ) {
@@ -201,7 +199,7 @@ export default class SandboxServer implements Party.Server {
     );
     if (byName) {
       if (byName.connectionId && byName.connectionId !== connection.id) {
-        const stillLive = [...this.room.getConnections()].some(
+        const stillLive = [...this.getConnections()].some(
           (c) => c.id === byName.connectionId,
         );
         if (stillLive) {
@@ -240,7 +238,7 @@ export default class SandboxServer implements Party.Server {
   }
 
   private handleSwap(
-    connection: Party.Connection,
+    connection: Connection,
     msg: Extract<ClientMessage, { type: 'swap' }>,
   ) {
     const player = this.requirePlayer(connection);
@@ -303,7 +301,7 @@ export default class SandboxServer implements Party.Server {
   }
 
   private handleAddLiquidity(
-    connection: Party.Connection,
+    connection: Connection,
     msg: Extract<ClientMessage, { type: 'addLiquidity' }>,
   ) {
     const player = this.requirePlayer(connection);
@@ -364,7 +362,7 @@ export default class SandboxServer implements Party.Server {
   }
 
   private handleRemoveLiquidity(
-    connection: Party.Connection,
+    connection: Connection,
     msg: Extract<ClientMessage, { type: 'removeLiquidity' }>,
   ) {
     const player = this.requirePlayer(connection);
@@ -432,7 +430,7 @@ export default class SandboxServer implements Party.Server {
   }
 
   private handleSetOracle(
-    connection: Party.Connection,
+    connection: Connection,
     token: TokenId,
     usd: number,
   ) {
@@ -441,7 +439,6 @@ export default class SandboxServer implements Party.Server {
     const from = this.state.oracle[token];
     this.state.oracle[token] = usd;
 
-    // Slider drags send many ticks; fold them into the latest matching event.
     const last = this.state.activity[0];
     const message = `Oracle: ${token} set to $${usd}`;
     if (
@@ -466,7 +463,7 @@ export default class SandboxServer implements Party.Server {
   }
 
   private handleWhale(
-    connection: Party.Connection,
+    connection: Connection,
     msg: Extract<ClientMessage, { type: 'injectWhale' }>,
   ) {
     const player = this.requirePlayer(connection);
@@ -507,7 +504,7 @@ export default class SandboxServer implements Party.Server {
     this.broadcastState();
   }
 
-  private handleGiveTokens(connection: Party.Connection, amount: number) {
+  private handleGiveTokens(connection: Connection, amount: number) {
     const player = this.requirePlayer(connection);
     if (!(amount > 0) || amount > 100_000) throw new Error('Invalid amount');
     for (const p of this.state.players) {
@@ -530,7 +527,7 @@ export default class SandboxServer implements Party.Server {
     this.broadcastState();
   }
 
-  private handleResetSandbox(connection: Party.Connection) {
+  private handleResetSandbox(connection: Connection) {
     const player = this.requirePlayer(connection);
     const kept = this.state.players.map((p) => ({
       ...p,
@@ -552,10 +549,7 @@ export default class SandboxServer implements Party.Server {
     this.broadcastState();
   }
 
-  private handleMarkChallenge(
-    connection: Party.Connection,
-    challengeId: string,
-  ) {
+  private handleMarkChallenge(connection: Connection, challengeId: string) {
     const player = this.requirePlayer(connection);
     const list = new Set(this.state.completedChallenges[player.id] ?? []);
     list.add(challengeId);
@@ -578,11 +572,11 @@ export default class SandboxServer implements Party.Server {
     }
   }
 
-  private send(connection: Party.Connection, msg: ServerMessage) {
+  private send(connection: Connection, msg: ServerMessage) {
     connection.send(JSON.stringify(msg));
   }
 
-  private sendState(conn: Party.Connection) {
+  private sendState(conn: Connection) {
     const playerId = this.playerIdForConnection(conn.id);
     this.send(conn, {
       type: 'state',
@@ -593,7 +587,7 @@ export default class SandboxServer implements Party.Server {
   }
 
   private broadcastState() {
-    for (const conn of this.room.getConnections()) {
+    for (const conn of this.getConnections()) {
       this.sendState(conn);
     }
   }
@@ -609,3 +603,12 @@ export default class SandboxServer implements Party.Server {
 function round(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    return (
+      (await routePartykitRequest(request, env)) ||
+      new Response('Not Found', { status: 404 })
+    );
+  },
+} satisfies ExportedHandler<Env>;

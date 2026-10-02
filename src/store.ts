@@ -276,7 +276,7 @@ export const useStore = create<ClientState>((set) => ({
       set({
         connStatus: 'idle',
         connected: false,
-        lastError: `Could not reach PartyKit at ${host}. Run npm run dev:party and confirm :1999 in the log.`,
+        lastError: `Could not reach the sandbox at ${host}. Run npm run dev:party and confirm :1999 in the log.`,
       });
     });
   },
@@ -315,7 +315,7 @@ export const useStore = create<ClientState>((set) => ({
     } catch {
       set({
         joining: false,
-        lastError: `Could not reach PartyKit at ${partyHost()}. Is npm run dev:party running?`,
+        lastError: `Could not reach the sandbox at ${partyHost()}. Is npm run dev:party running?`,
       });
       return;
     }

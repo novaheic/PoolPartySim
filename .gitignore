@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 .partykit
+.wrangler
+.dev.vars
 *.local
 
 # Editor directories and files
